@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const PRICE_COLORS = ['#22c55e', '#84cc16', '#f59e0b', '#ef4444']
 
@@ -15,19 +15,20 @@ function StarRating({ rating }) {
   )
 }
 
-export default function MapView({ places, onPlaceSelect, selectedPlaceId, userLocation, filters }) {
+export default function MapView({ places, onPlaceSelect, selectedPlaceId, userLocation, searchCenter, filters }) {
   const mapRef = useRef(null)
   const mapInstanceRef = useRef(null)
   const markersRef = useRef([])
   const infoWindowRef = useRef(null)
+  const userMarkerRef = useRef(null)   // blue pulsing dot
+  const radiusCircleRef = useRef(null) // radius ring
   const [mapLoaded, setMapLoaded] = useState(false)
 
+  // ── Load Google Maps script ───────────────────────────────────────────── //
   useEffect(() => {
     const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
-    if (!apiKey || window.google?.maps) {
-      if (window.google?.maps) setMapLoaded(true)
-      return
-    }
+    if (!apiKey) return
+    if (window.google?.maps) { setMapLoaded(true); return }
 
     const script = document.createElement('script')
     script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`
@@ -37,12 +38,13 @@ export default function MapView({ places, onPlaceSelect, selectedPlaceId, userLo
     document.head.appendChild(script)
   }, [])
 
+  // ── Initialise map ────────────────────────────────────────────────────── //
   useEffect(() => {
     if (!mapLoaded || !mapRef.current || mapInstanceRef.current) return
 
     const center = userLocation
       ? { lat: userLocation.lat, lng: userLocation.lng }
-      : { lat: 24.8607, lng: 67.0011 } // default: Karachi
+      : { lat: 24.8607, lng: 67.0011 }
 
     mapInstanceRef.current = new window.google.maps.Map(mapRef.current, {
       center,
@@ -50,19 +52,53 @@ export default function MapView({ places, onPlaceSelect, selectedPlaceId, userLo
       styles: darkMapStyle,
       disableDefaultUI: true,
       zoomControl: true,
-      mapTypeControl: false,
-      streetViewControl: false,
-      fullscreenControl: false,
+      gestureHandling: 'greedy',
     })
 
     infoWindowRef.current = new window.google.maps.InfoWindow()
   }, [mapLoaded, userLocation])
 
+  // ── GPS dot (always your real location) ──────────────────────────────── //
   useEffect(() => {
     if (!mapLoaded || !mapInstanceRef.current || !userLocation) return
-    mapInstanceRef.current.setCenter({ lat: userLocation.lat, lng: userLocation.lng })
+    const pos = { lat: userLocation.lat, lng: userLocation.lng }
+    const map = mapInstanceRef.current
+
+    if (userMarkerRef.current) userMarkerRef.current.forEach((m) => m.setMap(null))
+
+    const outerDot = new window.google.maps.Marker({
+      position: pos, map,
+      icon: { path: window.google.maps.SymbolPath.CIRCLE, scale: 14, fillColor: '#3b82f6', fillOpacity: 0.25, strokeColor: '#3b82f6', strokeWeight: 2, strokeOpacity: 0.6 },
+      zIndex: 200, clickable: false,
+    })
+    const innerDot = new window.google.maps.Marker({
+      position: pos, map,
+      icon: { path: window.google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: '#ffffff', fillOpacity: 1, strokeColor: '#3b82f6', strokeWeight: 3 },
+      zIndex: 201, title: 'You are here', clickable: false,
+    })
+    userMarkerRef.current = [outerDot, innerDot]
   }, [mapLoaded, userLocation])
 
+  // ── Radius circle (follows searchCenter — may differ from GPS) ────────── //
+  useEffect(() => {
+    if (!mapLoaded || !mapInstanceRef.current) return
+    const center = searchCenter || userLocation
+    if (!center) return
+    const map = mapInstanceRef.current
+    const pos = { lat: center.lat, lng: center.lng }
+    const radius = filters?.radius ?? 2000
+
+    map.setCenter(pos)
+
+    if (radiusCircleRef.current) radiusCircleRef.current.setMap(null)
+    radiusCircleRef.current = new window.google.maps.Circle({
+      map, center: pos, radius,
+      strokeColor: '#f97316', strokeOpacity: 0.7, strokeWeight: 1.5,
+      fillColor: '#f97316', fillOpacity: 0.06, zIndex: 1, clickable: false,
+    })
+  }, [mapLoaded, searchCenter, userLocation, filters?.radius])
+
+  // ── Restaurant markers ────────────────────────────────────────────────── //
   useEffect(() => {
     if (!mapLoaded || !mapInstanceRef.current) return
 
@@ -91,7 +127,7 @@ export default function MapView({ places, onPlaceSelect, selectedPlaceId, userLo
           strokeColor: '#fff',
           strokeWeight: isSelected ? 3 : 2,
         },
-        zIndex: isSelected ? 100 : 1,
+        zIndex: isSelected ? 100 : 10,
       })
 
       marker.addListener('click', () => {
@@ -106,6 +142,7 @@ export default function MapView({ places, onPlaceSelect, selectedPlaceId, userLo
     })
   }, [mapLoaded, places, selectedPlaceId, onPlaceSelect])
 
+  // ── No-API-key fallback ───────────────────────────────────────────────── //
   if (!import.meta.env.VITE_GOOGLE_MAPS_API_KEY) {
     return (
       <div className="flex-1 bg-gray-900 flex flex-col items-center justify-center gap-3 text-center px-6">
@@ -113,7 +150,7 @@ export default function MapView({ places, onPlaceSelect, selectedPlaceId, userLo
         <h2 className="text-white text-xl font-semibold">Google Maps not configured</h2>
         <p className="text-gray-400 text-sm max-w-xs">
           Add <code className="bg-gray-800 px-1 rounded text-amber-400">VITE_GOOGLE_MAPS_API_KEY</code> to{' '}
-          <code className="bg-gray-800 px-1 rounded text-amber-400">client/.env</code> to see the map.
+          <code className="bg-gray-800 px-1 rounded text-amber-400">client/.env</code> to enable the map.
         </p>
         {places.length > 0 && (
           <div className="mt-4 w-full max-w-sm space-y-2">

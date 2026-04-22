@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { getCurrencyInfo } from '../utils/currency'
 
 const CUISINE_OPTIONS = [
   'Desi', 'Chinese', 'Fast Food', 'Cafe', 'BBQ',
@@ -29,50 +30,101 @@ function RangeSlider({ label, min, max, value, onChange, format }) {
   )
 }
 
-function DualRangeSlider({ label, min, max, value, onChange, format }) {
+// Slider + free-type inputs, no upper limit
+function FreeRangeInput({ label, value, onChange, prefix = '', suffix = '', sliderMax }) {
+  const [loStr, setLoStr] = useState(String(value[0]))
+  const [hiStr, setHiStr] = useState(String(value[1]))
+
+  // Keep local string state in sync if parent resets the values
+  useState(() => { setLoStr(String(value[0])); setHiStr(String(value[1])) })
+
+  const commit = (lo, hi) => {
+    const loN = Math.max(0, Number(lo) || 0)
+    const hiN = Math.max(loN, Number(hi) || 0)
+    onChange([loN, hiN])
+  }
+
+  const dynMax = Math.max(sliderMax, value[1])
+
+  const loFrac = Math.min(value[0] / dynMax, 1)
+  const hiFrac = Math.min(value[1] / dynMax, 1)
+
   return (
-    <div className="space-y-2">
-      <div className="flex justify-between items-center">
-        <span className="text-gray-300 text-sm font-medium">{label}</span>
-        <span className="text-amber-400 text-xs font-mono">
-          {format(value[0])} – {format(value[1])}
-        </span>
+    <div className="space-y-2.5">
+      <span className="text-gray-300 text-sm font-medium">{label}</span>
+
+      {/* Free-type number inputs */}
+      <div className="flex items-center gap-2">
+        <div className="flex-1 flex items-center bg-gray-800 border border-gray-700 rounded-xl px-2.5 py-1.5 gap-1 focus-within:border-amber-500 transition-colors">
+          {prefix && <span className="text-gray-500 text-xs shrink-0">{prefix}</span>}
+          <input
+            type="number"
+            min={0}
+            value={loStr}
+            onChange={(e) => setLoStr(e.target.value)}
+            onBlur={() => { commit(loStr, hiStr); setLoStr(String(Math.max(0, Number(loStr) || 0))) }}
+            className="w-full bg-transparent text-white text-xs outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+            placeholder="Min"
+          />
+          {suffix && <span className="text-gray-500 text-xs shrink-0">{suffix}</span>}
+        </div>
+
+        <span className="text-gray-600 text-xs">–</span>
+
+        <div className="flex-1 flex items-center bg-gray-800 border border-gray-700 rounded-xl px-2.5 py-1.5 gap-1 focus-within:border-amber-500 transition-colors">
+          {prefix && <span className="text-gray-500 text-xs shrink-0">{prefix}</span>}
+          <input
+            type="number"
+            min={0}
+            value={hiStr}
+            onChange={(e) => setHiStr(e.target.value)}
+            onBlur={() => { commit(loStr, hiStr); setHiStr(String(Math.max(Number(loStr) || 0, Number(hiStr) || 0))) }}
+            className="w-full bg-transparent text-white text-xs outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+            placeholder="Max"
+          />
+          {suffix && <span className="text-gray-500 text-xs shrink-0">{suffix}</span>}
+        </div>
       </div>
-      <div className="relative h-6 flex items-center">
+
+      {/* Slider for quick adjustment */}
+      <div className="relative h-5 flex items-center">
         <div className="absolute w-full h-1.5 bg-gray-700 rounded-full" />
         <div
-          className="absolute h-1.5 bg-amber-500 rounded-full"
-          style={{
-            left: `${((value[0] - min) / (max - min)) * 100}%`,
-            right: `${100 - ((value[1] - min) / (max - min)) * 100}%`,
-          }}
+          className="absolute h-1.5 bg-amber-500 rounded-full pointer-events-none"
+          style={{ left: `${loFrac * 100}%`, right: `${(1 - hiFrac) * 100}%` }}
         />
         <input
           type="range"
-          min={min}
-          max={max}
+          min={0}
+          max={dynMax}
           value={value[0]}
-          onChange={(e) => onChange([Math.min(Number(e.target.value), value[1] - 1), value[1]])}
+          onChange={(e) => {
+            const v = Number(e.target.value)
+            const next = [v, Math.max(v, value[1])]
+            onChange(next); setLoStr(String(next[0])); setHiStr(String(next[1]))
+          }}
           className="absolute w-full appearance-none bg-transparent accent-amber-500 cursor-pointer"
         />
         <input
           type="range"
-          min={min}
-          max={max}
+          min={0}
+          max={dynMax}
           value={value[1]}
-          onChange={(e) => onChange([value[0], Math.max(Number(e.target.value), value[0] + 1)])}
+          onChange={(e) => {
+            const v = Number(e.target.value)
+            const next = [Math.min(value[0], v), v]
+            onChange(next); setLoStr(String(next[0])); setHiStr(String(next[1]))
+          }}
           className="absolute w-full appearance-none bg-transparent accent-amber-500 cursor-pointer"
         />
-      </div>
-      <div className="flex justify-between text-gray-600 text-xs">
-        <span>{format(min)}</span>
-        <span>{format(max)}</span>
       </div>
     </div>
   )
 }
 
-export default function FilterSidebar({ filters, onChange, collapsed, onToggle }) {
+export default function FilterSidebar({ filters, onChange, collapsed, onToggle, countryCode }) {
+  console.log(countryCode)
+  const { symbol } = getCurrencyInfo(countryCode)
   const toggleCuisine = (c) => {
     const next = filters.cuisines.includes(c)
       ? filters.cuisines.filter((x) => x !== c)
@@ -179,25 +231,19 @@ export default function FilterSidebar({ filters, onChange, collapsed, onToggle }
         </div>
 
         {/* Budget */}
-        <DualRangeSlider
+        <FreeRangeInput
           label="Budget"
-          min={0}
-          max={200}
           value={filters.budget}
           onChange={(v) => onChange({ budget: v })}
-          format={(v) => `$${v}`}
+          prefix={symbol}
+          sliderMax={5000}
         />
 
         {/* Price Level */}
         <div className="space-y-2">
           <span className="text-gray-300 text-sm font-medium">Price Level</span>
           <div className="flex gap-2">
-            {[
-              { level: 1, label: '$' },
-              { level: 2, label: '$$' },
-              { level: 3, label: '$$$' },
-              { level: 4, label: '$$$$' },
-            ].map(({ level, label }) => (
+            {[1, 2, 3, 4].map((level) => (
               <button
                 key={level}
                 onClick={() => {
@@ -212,7 +258,7 @@ export default function FilterSidebar({ filters, onChange, collapsed, onToggle }
                     : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                 }`}
               >
-                {label}
+                {symbol.repeat(level)}
               </button>
             ))}
           </div>
@@ -236,13 +282,12 @@ export default function FilterSidebar({ filters, onChange, collapsed, onToggle }
             </button>
           </div>
           {filters.caloriesEnabled && (
-            <DualRangeSlider
+            <FreeRangeInput
               label=""
-              min={0}
-              max={2000}
               value={filters.calories}
               onChange={(v) => onChange({ calories: v })}
-              format={(v) => `${v} kcal`}
+              suffix=" kcal"
+              sliderMax={3000}
             />
           )}
         </div>

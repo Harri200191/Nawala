@@ -3,13 +3,17 @@ import time
 import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from anthropic import AsyncAnthropic
+from groq import AsyncGroq
 from db import get_conn
 
 router = APIRouter(prefix="/api/verdict", tags=["verdict"])
 
 VERDICT_TTL = 86400  # 24 hours
-client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+GROQ_MODEL = "llama-3.1-8b-instant"
+
+
+def _get_client():
+    return AsyncGroq(api_key=os.getenv("GROQ_API_KEY", ""))
 
 
 class VerdictRequest(BaseModel):
@@ -33,8 +37,8 @@ async def get_verdict(req: VerdictRequest):
         if row and (now - row["fetched_at"]) < VERDICT_TTL:
             return {"verdict": row["verdict"], "cached": True}
 
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured")
+    if not os.getenv("GROQ_API_KEY"):
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY not configured")
 
     price_map = {0: "unknown", 1: "$", 2: "$$", 3: "$$$", 4: "$$$$"}
     price_str = price_map.get(req.price_level, "unknown")
@@ -53,18 +57,24 @@ Google Reviews:
 Reddit/Web Buzz:
 {reddit_bits or 'No web results available'}"""
 
-    message = await client.messages.create(
-        model="claude-haiku-4-5",
+    client = _get_client()
+    response = await client.chat.completions.create(
+        model=GROQ_MODEL,
         max_tokens=300,
-        system=(
-            "You are a food scout. Given this restaurant data, give a 4-line verdict covering: "
-            "vibe, price, standout dish, and best time to visit. Be direct. No fluff. "
-            "Format each line as: [Label]: [content]"
-        ),
-        messages=[{"role": "user", "content": user_content}],
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a food scout. Given this restaurant data, give a 4-line verdict covering: "
+                    "vibe, price, standout dish, and best time to visit. Be direct. No fluff. "
+                    "Format each line as: [Label]: [content]"
+                ),
+            },
+            {"role": "user", "content": user_content},
+        ],
     )
 
-    verdict = message.content[0].text
+    verdict = response.choices[0].message.content
 
     with get_conn() as conn:
         conn.execute(

@@ -2,10 +2,15 @@ import os
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from anthropic import AsyncAnthropic
+from groq import AsyncGroq
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+
+GROQ_MODEL = "llama-3.1-8b-instant"
+
+
+def _get_client():
+    return AsyncGroq(api_key=os.getenv("GROQ_API_KEY", ""))
 
 
 class Message(BaseModel):
@@ -36,23 +41,28 @@ def _build_system(profile: dict) -> str:
 
 @router.post("/stream")
 async def chat_stream(req: ChatRequest):
-    if not os.getenv("ANTHROPIC_API_KEY"):
+    if not os.getenv("GROQ_API_KEY"):
         async def error_gen():
-            yield "data: ANTHROPIC_API_KEY not configured\n\n"
+            yield "data: GROQ_API_KEY not configured\n\n"
         return StreamingResponse(error_gen(), media_type="text/event-stream")
 
     system_prompt = _build_system(req.user_profile)
-    messages = [{"role": m.role, "content": m.content} for m in req.messages]
+    messages = [{"role": "system", "content": system_prompt}] + [
+        {"role": m.role, "content": m.content} for m in req.messages
+    ]
 
     async def generate():
-        async with client.messages.stream(
-            model="claude-haiku-4-5",
+        client = _get_client()
+        stream = await client.chat.completions.create(
+            model=GROQ_MODEL,
             max_tokens=600,
-            system=system_prompt,
             messages=messages,
-        ) as stream:
-            async for text in stream.text_stream:
-                escaped = text.replace("\n", "\\n")
+            stream=True,
+        )
+        async for chunk in stream:
+            content = chunk.choices[0].delta.content
+            if content:
+                escaped = content.replace("\n", "\\n")
                 yield f"data: {escaped}\n\n"
         yield "data: [DONE]\n\n"
 
