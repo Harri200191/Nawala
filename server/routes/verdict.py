@@ -1,4 +1,3 @@
-import json
 import time
 import os
 from fastapi import APIRouter, HTTPException
@@ -32,7 +31,7 @@ async def get_verdict(req: VerdictRequest):
 
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT verdict, fetched_at FROM verdict_cache WHERE place_id=?", (req.place_id,)
+            "SELECT verdict, fetched_at FROM verdict_cache WHERE place_id=%s", (req.place_id,)
         ).fetchone()
         if row and (now - row["fetched_at"]) < VERDICT_TTL:
             return {"verdict": row["verdict"], "cached": True}
@@ -65,20 +64,34 @@ Reddit/Web Buzz:
             {
                 "role": "system",
                 "content": (
-                    "You are a food scout. Given this restaurant data, give a 4-line verdict covering: "
-                    "vibe, price, standout dish, and best time to visit. Be direct. No fluff. "
-                    "Format each line as: [Label]: [content]"
+                    "You are a food scout. Given this restaurant data, produce exactly 4 lines, "
+                    "each covering one of: vibe, price, standout dish, and best time to visit. "
+                    "Be direct and specific. No fluff. No preamble. NO MARKDOWN — "
+                    "do not use asterisks, bold, italics, backticks, or any decoration. "
+                    "Format each line exactly as: Label: content"
                 ),
             },
             {"role": "user", "content": user_content},
         ],
     )
 
-    verdict = response.choices[0].message.content
+    verdict = response.choices[0].message.content or ""
+    # Belt-and-suspenders: strip any markdown emphasis the model may still emit.
+    verdict = (
+        verdict.replace("**", "")
+        .replace("__", "")
+        .replace("`", "")
+        .strip()
+    )
+    # Strip single-asterisk emphasis but keep intentional asterisks in sentences rare
+    import re
+    verdict = re.sub(r"(?<!\S)\*(.+?)\*(?!\S)", r"\1", verdict)
 
     with get_conn() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO verdict_cache(place_id, verdict, fetched_at) VALUES(?,?,?)",
+            """INSERT INTO verdict_cache(place_id, verdict, fetched_at)
+               VALUES(%s, %s, %s)
+               ON CONFLICT (place_id) DO UPDATE SET verdict=EXCLUDED.verdict, fetched_at=EXCLUDED.fetched_at""",
             (req.place_id, verdict, now),
         )
 
