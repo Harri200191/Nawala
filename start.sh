@@ -5,6 +5,18 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 echo "▶ Starting Nawala..."
 
+# Database (Docker)
+if command -v docker >/dev/null 2>&1; then
+  if ! docker compose ps --status running postgres 2>/dev/null | grep -q postgres; then
+    echo "  → Starting Postgres + Adminer (docker compose up -d)"
+    (cd "$ROOT" && docker compose up -d)
+  else
+    echo "  → Postgres already running"
+  fi
+else
+  echo "  ⚠ Docker not found — skipping DB bring-up. Ensure PostgreSQL is reachable at the URL in server/.env."
+fi
+
 # Backend
 echo "  → FastAPI server on :3001"
 cd "$ROOT"
